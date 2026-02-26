@@ -1,0 +1,17 @@
+export const ENV = {
+  supabaseUrl: process.env.SUPABASE_URL ?? "",
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? "",
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET ?? "",
+  databaseUrl: process.env.DATABASE_URL ?? "",
+  isProduction: process.env.NODE_ENV === "production",
+  birdeyeApiKey: process.env.BIRDEYE_API_KEY ?? "",
+  xaiApiKey: process.env.XAI_API_KEY ?? "",
+  openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+  scrapybaraApiKey: process.env.SCRAPYBARA_API_KEY ?? "",
+  treasuryPrivateKey: process.env.TREASURY_PRIVATE_KEY ?? "",
+  treasuryWalletAddress: process.env.TREASURY_WALLET_ADDRESS ?? "",
+  heliusRpcUrl: process.env.HELIUS_RPC_URL ?? "",
+  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
+  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+};

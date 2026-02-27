@@ -44,6 +44,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/play" component={Game} />
+      <Route path="/game" component={Game} />
       <Route path="/leaderboard" component={Leaderboard} />
       <Route path="/history" component={History} />
       <Route path="/skins" component={Skins} />

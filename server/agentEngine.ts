@@ -70,7 +70,11 @@ export interface AgentRunResult {
 }
 
 // ─── LLM Providers ───
-async function callXAI(systemPrompt: string, userPrompt: string): Promise<{ action: AgentAction; reasoning: string; tokens: number }> {
+async function callXAI(
+  systemPrompt: string,
+  userPrompt: string,
+  modelName: string,
+): Promise<{ action: AgentAction; reasoning: string; tokens: number }> {
   try {
     const res = await fetch("https://api.x.ai/v1/chat/completions", {
       method: "POST",
@@ -79,7 +83,7 @@ async function callXAI(systemPrompt: string, userPrompt: string): Promise<{ acti
         Authorization: `Bearer ${ENV.xaiApiKey}`,
       },
       body: JSON.stringify({
-        model: "grok-3-mini-fast",
+        model: modelName || "grok-3-mini-fast",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -114,7 +118,11 @@ async function callXAI(systemPrompt: string, userPrompt: string): Promise<{ acti
   }
 }
 
-async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{ action: AgentAction; reasoning: string; tokens: number }> {
+async function callOpenAI(
+  systemPrompt: string,
+  userPrompt: string,
+  modelName: string,
+): Promise<{ action: AgentAction; reasoning: string; tokens: number }> {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -123,7 +131,7 @@ async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{ a
         Authorization: `Bearer ${ENV.openaiApiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: modelName || "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -245,6 +253,61 @@ ${nearPU.slice(0, 3).map(p => `  ${p.type} in lane ${p.lane} at +${(p.distance -
 Choose your action:`;
 }
 
+function hasProviderCredentials(provider: "xai" | "openai" | "anthropic"): boolean {
+  if (provider === "xai") return Boolean(ENV.xaiApiKey);
+  if (provider === "openai") return Boolean(ENV.openaiApiKey);
+  return Boolean(ENV.forgeApiKey || ENV.openaiApiKey);
+}
+
+function chooseHeuristicAction(
+  state: SimState,
+  riskTolerance: number,
+  coinPriority: number,
+): { action: AgentAction; reasoning: string } {
+  const upcomingObstacles = state.obstacles
+    .map(o => ({ ...o, delta: o.distance - state.distance }))
+    .filter(o => o.delta > 0 && o.delta < 10)
+    .sort((a, b) => a.delta - b.delta);
+
+  const immediateInLane = upcomingObstacles.find(o => o.lane === state.lane && o.delta < 6);
+  const laneClear = (targetLane: number) => !upcomingObstacles.some(o => o.lane === targetLane && o.delta < 5);
+
+  if (immediateInLane && !state.isJumping) {
+    if (state.lane > 0 && laneClear(state.lane - 1)) {
+      return { action: "left", reasoning: "Heuristic: dodge immediate obstacle to the left lane." };
+    }
+    if (state.lane < 2 && laneClear(state.lane + 1)) {
+      return { action: "right", reasoning: "Heuristic: dodge immediate obstacle to the right lane." };
+    }
+    return { action: "jump", reasoning: "Heuristic: jump over immediate obstacle in current lane." };
+  }
+
+  const upcomingCoins = state.nearbyCoins
+    .map(c => ({ ...c, delta: c.distance - state.distance }))
+    .filter(c => c.delta > 0 && c.delta < 12)
+    .sort((a, b) => a.delta - b.delta);
+
+  if (coinPriority >= 40 && upcomingCoins.length > 0) {
+    const targetCoin = upcomingCoins[0];
+    if (targetCoin.lane < state.lane) {
+      return { action: "left", reasoning: "Heuristic: shift toward nearest coin." };
+    }
+    if (targetCoin.lane > state.lane) {
+      return { action: "right", reasoning: "Heuristic: shift toward nearest coin." };
+    }
+  }
+
+  if (
+    riskTolerance > 70 &&
+    !state.isJumping &&
+    upcomingObstacles.some(o => o.lane === state.lane && o.delta < 8)
+  ) {
+    return { action: "jump", reasoning: "Heuristic: aggressive jump to maintain pace." };
+  }
+
+  return { action: "none", reasoning: "Heuristic: hold current line." };
+}
+
 // ─── Main Agent Run ───
 export async function runAutonomousAgent(config: {
   modelProvider: "xai" | "openai" | "anthropic";
@@ -256,9 +319,7 @@ export async function runAutonomousAgent(config: {
   coinPriority: number;
 }): Promise<AgentRunResult> {
   const systemPrompt = buildAgentSystemPrompt(config.personality, config.difficulty);
-  const callLLM = config.modelProvider === "xai" ? callXAI
-    : config.modelProvider === "openai" ? callOpenAI
-    : callAnthropic;
+  const canUseProvider = hasProviderCredentials(config.modelProvider);
 
   // Simulation state
   let distance = 0;
@@ -276,6 +337,8 @@ export async function runAutonomousAgent(config: {
   let chaserPos = -20;
   let frame = 0;
   let totalTokens = 0;
+  let magnetUntilFrame = -1;
+  let speedBoostUntilFrame = -1;
 
   const decisionLog: DecisionLogEntry[] = [];
   const ghostData: GhostFrame[] = [];
@@ -292,6 +355,9 @@ export async function runAutonomousAgent(config: {
 
   while (isAlive && frame < MAX_FRAMES) {
     // Speed increases
+    if (frame > magnetUntilFrame) magnetActive = false;
+    if (frame > speedBoostUntilFrame) speedBoostActive = false;
+
     speed = Math.min(28, speed + 0.003);
     const effectiveSpeed = speedBoostActive ? speed * 1.8 : speed;
     const moveZ = effectiveSpeed * TICK_DELTA;
@@ -321,13 +387,33 @@ export async function runAutonomousAgent(config: {
         score, coins, speed, lane, playerY, isJumping,
         hasShield, magnetActive, speedBoostActive, isAlive,
         obstacles,
-        nearbyCoins: allCoins.filter(c => !c.distance),
+        nearbyCoins: allCoins,
         nearbyPowerUps: powerUps,
         chaserDistance: distance - chaserPos,
       };
 
       const statePrompt = buildStatePrompt(simState);
-      const { action, reasoning, tokens } = await callLLM(systemPrompt, statePrompt);
+      let action: AgentAction = "none";
+      let reasoning = "Heuristic fallback";
+      let tokens = 0;
+
+      if (canUseProvider) {
+        const llmResult = config.modelProvider === "xai"
+          ? await callXAI(systemPrompt, statePrompt, config.modelName)
+          : config.modelProvider === "openai"
+            ? await callOpenAI(systemPrompt, statePrompt, config.modelName)
+            : await callAnthropic(systemPrompt, statePrompt);
+        action = llmResult.action;
+        reasoning = llmResult.reasoning;
+        tokens = llmResult.tokens;
+      }
+
+      if (!canUseProvider || (tokens === 0 && reasoning === "API error")) {
+        const fallback = chooseHeuristicAction(simState, config.riskTolerance, config.coinPriority);
+        action = fallback.action;
+        reasoning = fallback.reasoning;
+      }
+
       totalTokens += tokens;
       pendingAction = action;
 
@@ -377,8 +463,14 @@ export async function runAutonomousAgent(config: {
       if (pu.lane === lane && Math.abs(puDist) < 1.2) {
         switch (pu.type) {
           case "shield": hasShield = true; break;
-          case "coin_magnet": magnetActive = true; setTimeout(() => { magnetActive = false; }, 8000); break;
-          case "speed_boost": speedBoostActive = true; setTimeout(() => { speedBoostActive = false; }, 5000); break;
+          case "coin_magnet":
+            magnetActive = true;
+            magnetUntilFrame = frame + 80; // ~8s
+            break;
+          case "speed_boost":
+            speedBoostActive = true;
+            speedBoostUntilFrame = frame + 50; // ~5s
+            break;
         }
         pu.distance = -999;
       }

@@ -8,11 +8,13 @@ import App from "./App";
 import "./index.css";
 
 const queryClient = new QueryClient();
+const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
+const trpcUrl = apiBase ? `${apiBase}/api/trpc` : "/api/trpc";
 
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
-      url: "/api/trpc",
+      url: trpcUrl,
       transformer: superjson,
       async headers() {
         const { data: { session } } = await supabase.auth.getSession();

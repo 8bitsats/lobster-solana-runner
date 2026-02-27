@@ -188,6 +188,50 @@ export async function verifyTransaction(signature: string): Promise<{
 }
 
 /**
+ * Verify a confirmed transfer from a specific wallet to treasury for at least minLamports.
+ */
+export async function verifyTransferToTreasury(
+  signature: string,
+  fromAddress: string,
+  minLamports: number,
+): Promise<{ valid: boolean; lamports: number; reason?: string }> {
+  const connection = getConnection();
+  const tx = await connection.getParsedTransaction(signature, {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  });
+
+  if (!tx) return { valid: false, lamports: 0, reason: "Transaction not found." };
+  if (tx.meta?.err) return { valid: false, lamports: 0, reason: "Transaction failed on-chain." };
+
+  const treasuryAddress = getTreasuryAddress();
+  let lamportsToTreasury = 0;
+
+  for (const ix of tx.transaction.message.instructions as any[]) {
+    const parsed = ix?.parsed;
+    if (!parsed || parsed?.type !== "transfer") continue;
+    const info = parsed.info || {};
+    if (info.source === fromAddress && info.destination === treasuryAddress) {
+      lamportsToTreasury += Number(info.lamports ?? 0);
+    }
+  }
+
+  if (lamportsToTreasury <= 0) {
+    return { valid: false, lamports: 0, reason: "No transfer to treasury found in transaction." };
+  }
+
+  if (lamportsToTreasury < minLamports) {
+    return {
+      valid: false,
+      lamports: lamportsToTreasury,
+      reason: `Transferred ${(lamportsToTreasury / LAMPORTS_PER_SOL).toFixed(9)} SOL but expected at least ${(minLamports / LAMPORTS_PER_SOL).toFixed(9)} SOL.`,
+    };
+  }
+
+  return { valid: true, lamports: lamportsToTreasury };
+}
+
+/**
  * Get recent transaction history for the treasury wallet
  */
 export async function getTreasuryTransactions(limit = 20): Promise<any[]> {

@@ -28,12 +28,12 @@ import { ENV } from "./_core/env";
 import {
   getTreasuryBalance, getWalletBalance, getWalletAssets,
   sendSolToWinner, calculatePrize, getTreasuryAddress,
-  getTreasuryTransactions, verifyTransaction,
+  getTreasuryTransactions, verifyTransaction, verifyTransferToTreasury,
 } from "./solana";
 import {
   createPayout, updatePayoutStatus, getPayoutsByUser,
   getRecentPayouts, getPendingPayoutForSession, getPayoutStats,
-  getCredits, addCredits, spendCredit, getCreditHistory,
+  getCredits, addCredits, spendCredit, getCreditHistory, getCreditTransactionBySignature,
   getPaidGamesInWindow, getPaidGameStats,
 } from "./db";
 
@@ -75,6 +75,7 @@ export const appRouter = router({
         coinsCollected: z.number().int().min(0),
         survivalTimeMs: z.number().int().min(0),
         outcome: z.enum(["win", "fail", "abandoned"]),
+        isPaidMode: z.boolean().optional(),
         walletAddress: z.string().optional(),
         solEarned: z.string().optional(),
       }))
@@ -88,6 +89,7 @@ export const appRouter = router({
           coinsCollected: input.coinsCollected,
           survivalTimeMs: input.survivalTimeMs,
           outcome: input.outcome,
+          isPaidMode: input.isPaidMode ?? false,
           solEarned: input.solEarned ?? "0",
         });
         return { success: true, id: result?.id };
@@ -927,6 +929,17 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         const expectedSol = input.creditsToBuy * CREDIT_CONSTANTS.ENTRY_FEE_SOL;
+        const expectedLamports = Math.floor(expectedSol * 1e9);
+
+        const wallet = await getWalletByUserId(ctx.user.id);
+        if (!wallet || wallet.walletAddress !== input.walletAddress) {
+          throw new Error("Wallet not linked to your account");
+        }
+
+        const usedTx = await getCreditTransactionBySignature(input.txSignature);
+        if (usedTx) {
+          throw new Error("This transaction signature has already been used for a credit deposit.");
+        }
 
         // Poll for tx confirmation (Phantom may return before confirmation)
         let confirmed = false;
@@ -938,6 +951,15 @@ export const appRouter = router({
 
         if (!confirmed) {
           throw new Error("Transaction not confirmed after polling. Please try again shortly.");
+        }
+
+        const transferCheck = await verifyTransferToTreasury(
+          input.txSignature,
+          input.walletAddress,
+          expectedLamports,
+        );
+        if (!transferCheck.valid) {
+          throw new Error(transferCheck.reason || "Transaction did not transfer the expected amount to treasury.");
         }
 
         // Add credits to user balance
@@ -987,7 +1009,7 @@ export const appRouter = router({
         ...stats,
         entryFeeSol: CREDIT_CONSTANTS.ENTRY_FEE_SOL,
         prizeSol: CREDIT_CONSTANTS.PRIZE_SOL,
-        netPLSol: (stats.totalWon - stats.totalSpent) * CREDIT_CONSTANTS.ENTRY_FEE_SOL,
+        netPLSol: stats.totalPayoutSol - (stats.totalSpent * CREDIT_CONSTANTS.ENTRY_FEE_SOL),
       };
     }),
   }),

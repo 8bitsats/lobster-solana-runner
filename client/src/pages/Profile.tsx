@@ -265,7 +265,7 @@ export default function Profile() {
                   <span>{creditBalance.data?.prizeAmount ?? 0.1} SOL</span>
                 </div>
               </div>
-              <Link href="/game">
+              <Link href="/play">
                 <Button className="w-full mt-4 bg-yellow-600 hover:bg-yellow-700" size="sm">
                   <Wallet className="w-4 h-4 mr-1" /> Buy Credits
                 </Button>
@@ -286,7 +286,8 @@ export default function Profile() {
                     { label: "Wins", value: paidStats.data.wins.toString(), icon: <Trophy className="w-5 h-5 text-green-400" /> },
                     { label: "Losses", value: paidStats.data.losses.toString(), icon: <TrendingDown className="w-5 h-5 text-red-400" /> },
                     { label: "Credits Spent", value: paidStats.data.totalSpent.toString(), icon: <Coins className="w-5 h-5 text-amber-400" /> },
-                    { label: "Credits Won", value: paidStats.data.totalWon.toString(), icon: <Coins className="w-5 h-5 text-green-400" /> },
+                    { label: "Wins", value: paidStats.data.totalWon.toString(), icon: <Coins className="w-5 h-5 text-green-400" /> },
+                    { label: "SOL Won", value: `${(paidStats.data.totalPayoutSol || 0).toFixed(4)}`, icon: <Wallet className="w-5 h-5 text-cyan-400" /> },
                     {
                       label: "Net P&L (SOL)",
                       value: `${paidStats.data.netPLSol >= 0 ? "+" : ""}${paidStats.data.netPLSol.toFixed(4)}`,

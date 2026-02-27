@@ -83,10 +83,9 @@ export default function Game() {
   });
   const spendCreditMutation = trpc.credits.spend.useMutation({
     onSuccess: () => {
-      setIsPaidGame(true);
       setSpendingCredit(false);
       creditBalance.refetch();
-      handleStart();
+      startRun(true);
     },
     onError: (e) => { toast.error(e.message); setSpendingCredit(false); },
   });
@@ -172,11 +171,12 @@ export default function Game() {
         coinsCollected: state.coins,
         survivalTimeMs: Math.floor(state.survivalTime * 1000),
         outcome: "fail",
+        isPaidMode: isPaidGame,
         walletAddress: walletAddress || undefined,
         solEarned: state.solEarned.toFixed(6),
       });
     }
-  }, [user, walletAddress, saveSession]);
+  }, [isPaidGame, user, walletAddress, saveSession]);
 
   const { init, startGame, stopGame, gameReady, handleTouchLeft, handleTouchRight, handleTouchJump, getChaserProgress } = useGameEngine(canvasRef, {
     onScoreUpdate: handleScoreUpdate,
@@ -196,24 +196,26 @@ export default function Game() {
     return () => clearInterval(interval);
   }, [screen, getChaserProgress]);
 
-  const handleStart = () => {
+  const startRun = (paidMode: boolean) => {
+    setIsPaidGame(paidMode);
     setScreen("playing");
     setScore(0); setCoins(0); setDistance(0); setSolEarned(0);
     setShareCode(null); setSessionId(null);
     startGame();
   };
 
+  const handleStart = () => {
+    startRun(false);
+  };
+
   const handleRestart = () => {
-    setScreen("playing");
-    setScore(0); setCoins(0); setDistance(0); setSolEarned(0);
-    setShareCode(null); setSessionId(null);
+    startRun(false);
     setClaimStatus("idle"); setClaimTx(null); setClaimAmount(0);
-    setIsPaidGame(false);
-    startGame();
   };
 
   const handleBackToTitle = () => {
     setScreen("title");
+    setIsPaidGame(false);
     stopGame();
   };
 

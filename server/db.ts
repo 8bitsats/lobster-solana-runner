@@ -1,4 +1,4 @@
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import {
@@ -17,6 +17,9 @@ import type {
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
+  if (process.env.VITEST && process.env.TEST_USE_DATABASE !== "1") {
+    return null;
+  }
   if (!_db && process.env.DATABASE_URL) {
     try {
       const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
@@ -104,6 +107,13 @@ export async function saveGameSession(session: InsertGameSession) {
 
   if (session.userId) {
     await updateLeaderboardForUser(session.userId, session.playerType ?? "human");
+    await updateProfileStats(
+      session.userId,
+      session.score ?? 0,
+      session.distance ?? 0,
+      session.coinsCollected ?? 0,
+      session.outcome ?? "fail",
+    );
   } else if (session.aiAgentId) {
     await updateLeaderboardForAgent(session.aiAgentId);
   }
@@ -170,6 +180,7 @@ async function updateLeaderboardForAgent(agentId: number) {
     bestScore: sql<number>`MAX(${gameSessions.score})`,
     bestDistance: sql<number>`MAX(${gameSessions.distance})`,
     totalGames: sql<number>`COUNT(*)`,
+    totalScore: sql<number>`SUM(${gameSessions.score})`,
     totalCoins: sql<number>`SUM(${gameSessions.coinsCollected})`,
     avgScore: sql<number>`AVG(${gameSessions.score})`,
   }).from(gameSessions).where(eq(gameSessions.aiAgentId, agentId));
@@ -199,7 +210,7 @@ async function updateLeaderboardForAgent(agentId: number) {
 
   await db.update(aiAgents).set({
     totalGames: stats[0].totalGames || 0,
-    totalScore: stats[0].bestScore || 0,
+    totalScore: stats[0].totalScore || 0,
     bestScore: stats[0].bestScore || 0,
   }).where(eq(aiAgents.id, agentId));
 }
@@ -682,20 +693,26 @@ export async function getPublicProfiles(limit = 50) {
     .limit(limit);
 }
 
-export async function updateProfileStats(userId: number, score: number, distance: number, coins: number) {
+export async function updateProfileStats(
+  userId: number,
+  score: number,
+  distance: number,
+  coins: number,
+  outcome: "win" | "fail" | "abandoned" = "fail",
+) {
   const db = await getDb();
   if (!db) return;
   const profile = await getProfileByUserId(userId);
   if (!profile) {
     await getOrCreateProfile(userId);
-    return updateProfileStats(userId, score, distance, coins);
+    return updateProfileStats(userId, score, distance, coins, outcome);
   }
   await db.update(playerProfiles).set({
     totalGames: profile.totalGames + 1,
     highScore: Math.max(profile.highScore, score),
     totalCoins: profile.totalCoins + coins,
     totalDistance: profile.totalDistance + distance,
-    totalWins: score > 0 ? profile.totalWins + 1 : profile.totalWins,
+    totalWins: outcome === "win" ? profile.totalWins + 1 : profile.totalWins,
   }).where(eq(playerProfiles.userId, userId));
 }
 
@@ -784,7 +801,10 @@ export async function getPendingPayoutForSession(gameSessionId: number) {
   const db = await getDb();
   if (!db) return null;
   const results = await db.select().from(payouts)
-    .where(and(eq(payouts.gameSessionId, gameSessionId), eq(payouts.status, "pending")))
+    .where(and(
+      eq(payouts.gameSessionId, gameSessionId),
+      inArray(payouts.status, ["pending", "processing", "confirmed"]),
+    ))
     .limit(1);
   return results.length > 0 ? results[0] : null;
 }
@@ -897,6 +917,15 @@ export async function getCreditHistory(userId: number, limit = 50) {
     .limit(limit);
 }
 
+export async function getCreditTransactionBySignature(txSignature: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(creditTransactions)
+    .where(eq(creditTransactions.txSignature, txSignature))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function getPaidGamesInWindow(userId: number, windowMs = 24 * 60 * 60 * 1000): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
@@ -914,31 +943,47 @@ export async function getPaidGamesInWindow(userId: number, windowMs = 24 * 60 * 
 
 export async function getPaidGameStats(userId: number) {
   const db = await getDb();
-  if (!db) return { totalPaidGames: 0, wins: 0, losses: 0, totalSpent: 0, totalWon: 0 };
+  if (!db) {
+    return {
+      totalPaidGames: 0,
+      wins: 0,
+      losses: 0,
+      totalSpent: 0,
+      totalWon: 0,
+      totalPayoutSol: 0,
+      netPL: 0,
+    };
+  }
 
-  const spentResult = await db.select({
+  const paidGamesResult = await db.select({
     count: sql<number>`COUNT(*)`,
-    total: sql<number>`ABS(SUM(amount))`,
-  }).from(creditTransactions)
-    .where(and(eq(creditTransactions.userId, userId), eq(creditTransactions.type, "spend")));
+  }).from(gameSessions)
+    .where(and(eq(gameSessions.userId, userId), eq(gameSessions.isPaidMode, true)));
 
-  const wonResult = await db.select({
-    count: sql<number>`COUNT(*)`,
-    total: sql<number>`SUM(amount)`,
-  }).from(creditTransactions)
-    .where(and(eq(creditTransactions.userId, userId), eq(creditTransactions.type, "prize")));
+  const payoutResult = await db.select({
+    wins: sql<number>`COUNT(*)`,
+    totalSol: sql<string>`COALESCE(SUM(CAST(${payouts.amountSol} AS DECIMAL(20,9))), 0)`,
+  }).from(payouts)
+    .innerJoin(gameSessions, eq(gameSessions.id, payouts.gameSessionId))
+    .where(and(
+      eq(payouts.userId, userId),
+      eq(payouts.status, "confirmed"),
+      eq(gameSessions.isPaidMode, true),
+    ));
 
-  const totalPaidGames = Number(spentResult[0]?.count ?? 0);
-  const wins = Number(wonResult[0]?.count ?? 0);
-  const totalSpent = Number(spentResult[0]?.total ?? 0);
-  const totalWon = Number(wonResult[0]?.total ?? 0);
+  const totalPaidGames = Number(paidGamesResult[0]?.count ?? 0);
+  const wins = Number(payoutResult[0]?.wins ?? 0);
+  const totalPayoutSol = Number(payoutResult[0]?.totalSol ?? 0);
+  const totalSpent = totalPaidGames;
+  const totalWon = wins;
 
   return {
     totalPaidGames,
     wins,
-    losses: totalPaidGames - wins,
+    losses: Math.max(totalPaidGames - wins, 0),
     totalSpent,
     totalWon,
-    netPL: totalWon - totalSpent,
+    totalPayoutSol,
+    netPL: totalPayoutSol - totalSpent,
   };
 }

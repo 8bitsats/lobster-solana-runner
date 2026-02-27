@@ -1,7 +1,9 @@
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import { lobsterSkins } from "./drizzle/schema.ts";
 
-const db = drizzle(process.env.DATABASE_URL);
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle(pool);
 
 const skins = [
   {
@@ -138,13 +140,14 @@ async function seed() {
   console.log("Seeding lobster skins...");
   for (const skin of skins) {
     try {
-      await db.insert(lobsterSkins).values(skin).onDuplicateKeyUpdate({ set: { name: skin.name } });
+      await db.insert(lobsterSkins).values(skin).onConflictDoNothing();
       console.log(`  ✓ ${skin.name} (${skin.rarity})`);
     } catch (e) {
       console.log(`  ✗ ${skin.name}: ${e.message}`);
     }
   }
   console.log("Done!");
+  await pool.end();
   process.exit(0);
 }
 

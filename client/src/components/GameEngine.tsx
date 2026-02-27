@@ -7,11 +7,11 @@ const LANE_COUNT = 3;
 const LANE_WIDTH = 2.0;
 const SEGMENT_LENGTH = 4.0;
 const VISIBLE_SEGMENTS = 30;
-const INITIAL_SPEED = 12;
-const MAX_SPEED = 28;
-const SPEED_INCREMENT = 0.003;
-const JUMP_FORCE = 14;
-const GRAVITY = -32;
+const INITIAL_SPEED = 11;
+const MAX_SPEED = 26;
+const SPEED_INCREMENT = 0.002;
+const JUMP_FORCE = 12.5;
+const GRAVITY = -28;
 const COIN_VALUE = 10;
 const SOL_PER_COIN = 0.000005;
 
@@ -62,7 +62,7 @@ export type MapTheme = "deep_ocean" | "coral_reef" | "volcanic_vent" | "frozen_a
 export const MAP_THEMES: Record<MapTheme, { name: string; description: string; colors: { fog: number; floor: number; track: number; trackAlt: number; edge: number; ambient: number; sun: number; caustic1: number; caustic2: number } }> = {
   deep_ocean: {
     name: "Deep Ocean", description: "The classic underwater abyss",
-    colors: { fog: 0x041830, floor: 0x0a1a2a, track: 0x1a2a3a, trackAlt: 0x152535, edge: 0x9945ff, ambient: 0x2255aa, sun: 0x88ccff, caustic1: 0x14F195, caustic2: 0x9945ff },
+    colors: { fog: 0x082848, floor: 0x143050, track: 0x253a50, trackAlt: 0x1e3345, edge: 0x9945ff, ambient: 0x4477cc, sun: 0xaaddff, caustic1: 0x14F195, caustic2: 0x9945ff },
   },
   coral_reef: {
     name: "Coral Reef", description: "Vibrant shallow waters teeming with life",
@@ -276,34 +276,39 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
 
   // ─── BUILD UNDERWATER ENVIRONMENT ───
   const buildEnvironment = useCallback((scene: THREE.Scene) => {
-    // Water fog
-    scene.fog = new THREE.FogExp2(0x041830, 0.018);
-    scene.background = new THREE.Color(0x041830);
+    // Water fog — lighter density so players can see further
+    scene.fog = new THREE.FogExp2(0x082848, 0.012);
+    scene.background = new THREE.Color(0x082848);
 
-    // Ambient light (underwater blue-green)
-    const ambient = new THREE.AmbientLight(0x2255aa, 0.6);
+    // Ambient light (brighter underwater blue-green)
+    const ambient = new THREE.AmbientLight(0x4477cc, 1.0);
     scene.add(ambient);
 
-    // Directional light (sun through water)
-    const sun = new THREE.DirectionalLight(0x88ccff, 0.8);
+    // Directional light (sun through water — brighter)
+    const sun = new THREE.DirectionalLight(0xaaddff, 1.2);
     sun.position.set(-5, 30, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.width = 1024;
     sun.shadow.mapSize.height = 1024;
     scene.add(sun);
 
+    // Secondary fill light from the other side
+    const fill = new THREE.DirectionalLight(0x6699cc, 0.4);
+    fill.position.set(5, 15, -5);
+    scene.add(fill);
+
     // Caustics light (moving green-blue patterns)
-    const caustic1 = new THREE.PointLight(0x14F195, 1.2, 25);
+    const caustic1 = new THREE.PointLight(0x14F195, 1.5, 30);
     caustic1.position.set(0, 8, 5);
     scene.add(caustic1);
 
-    const caustic2 = new THREE.PointLight(0x9945ff, 0.8, 20);
+    const caustic2 = new THREE.PointLight(0x9945ff, 1.0, 25);
     caustic2.position.set(3, 6, -5);
     scene.add(caustic2);
 
-    // Ocean floor
+    // Ocean floor — lighter
     const floorGeo = new THREE.PlaneGeometry(200, 200);
-    const floorMat = new THREE.MeshPhongMaterial({ color: 0x0a1a2a, shininess: 5 });
+    const floorMat = new THREE.MeshPhongMaterial({ color: 0x143050, shininess: 8 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -2;
@@ -658,9 +663,9 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
     const group = new THREE.Group();
 
     // Track base (3 lanes)
-    const trackMat = new THREE.MeshPhongMaterial({ color: 0x1a2a3a, shininess: 20 });
-    const trackAltMat = new THREE.MeshPhongMaterial({ color: 0x152535 });
-    const edgeMat = new THREE.MeshPhongMaterial({ color: 0x9945ff, emissive: 0x331166, emissiveIntensity: 0.3 });
+    const trackMat = new THREE.MeshPhongMaterial({ color: 0x253a50, shininess: 25 });
+    const trackAltMat = new THREE.MeshPhongMaterial({ color: 0x1e3345 });
+    const edgeMat = new THREE.MeshPhongMaterial({ color: 0xaa55ff, emissive: 0x442288, emissiveIntensity: 0.4 });
 
     for (let seg = 0; seg < VISIBLE_SEGMENTS * 2; seg++) {
       const z = -seg * SEGMENT_LENGTH;
@@ -853,7 +858,7 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMappingExposure = 1.4;
     rendererRef.current = renderer;
 
     // Scene
@@ -972,8 +977,8 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
     const effectiveSpeed = state.speedBoostActive ? state.speed * 1.8 : state.speed;
     const moveZ = effectiveSpeed * delta;
     totalDistRef.current += moveZ;
-    state.distance = Math.floor(totalDistRef.current);
-    state.score = state.distance + state.coins * COIN_VALUE;
+    state.distance = Math.round(totalDistRef.current * 10) / 10;
+    state.score = Math.floor(state.distance) + state.coins * COIN_VALUE;
 
     // ─── Ghost recording ───
     ghostRecordTimer.current += delta;
@@ -994,14 +999,16 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
         const gx = (gf.lane - 1) * LANE_WIDTH;
         ghostPlayerRef.current.position.x += (gx - ghostPlayerRef.current.position.x) * 8 * delta;
         ghostPlayerRef.current.position.y = gf.playerY;
-        ghostPlayerRef.current.position.z = -2; // slightly ahead
+        ghostPlayerRef.current.position.z = 3; // behind the player, away from collision zone
       }
+    } else if (ghostPlayerRef.current) {
+      ghostPlayerRef.current.visible = false;
     }
 
     // ─── Lane switching ───
     const keys = keysRef.current;
     const targetX = (state.lane - 1) * LANE_WIDTH;
-    const lerpSpeed = 10 * delta;
+    const lerpSpeed = 12 * delta;
 
     if (keys.has("left") && state.lane > 0) {
       state.lane--;
@@ -1101,7 +1108,7 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
       const z = nextObstacleZ.current;
       const lane = Math.floor(Math.random() * 3);
       obstaclesRef.current.push(createObstacle(scene, lane, z));
-      nextObstacleZ.current -= (6 + Math.random() * 6);
+      nextObstacleZ.current -= (8 + Math.random() * 6);
     }
 
     // ─── Move coins ───
@@ -1192,7 +1199,7 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
 
     // Power-up collection
     for (const pu of powerUpsRef.current) {
-      if (!pu.collected && pu.lane === playerLane && Math.abs(pu.mesh.position.z) < 1.2) {
+      if (!pu.collected && pu.lane === playerLane && Math.abs(pu.mesh.position.z) < 1.5) {
         pu.collected = true;
         pu.mesh.visible = false;
         // Activate power-up
@@ -1209,10 +1216,10 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
       }
     }
 
-    // Obstacles
+    // Obstacles — tighter collision box for fair gameplay
     for (const obs of obstaclesRef.current) {
       const obsZ = obs.mesh.position.z;
-      if (obs.lane === playerLane && Math.abs(obsZ) < 1.2 && state.playerY < obs.height) {
+      if (obs.lane === playerLane && Math.abs(obsZ) < 0.9 && state.playerY < obs.height * 0.85) {
         if (state.hasShield) {
           // Shield absorbs hit
           state.hasShield = false;
@@ -1290,10 +1297,10 @@ export function useGameEngine(canvasRef: React.RefObject<HTMLCanvasElement | nul
       return;
     }
 
-    // ─── Camera follow ───
-    const camTarget = new THREE.Vector3(player.position.x * 0.3, 4 + state.playerY * 0.5, 7);
-    camera.position.lerp(camTarget, 0.05);
-    camera.lookAt(player.position.x * 0.5, 1 + state.playerY * 0.3, -10);
+    // ─── Camera follow — smooth cinematic ───
+    const camTarget = new THREE.Vector3(player.position.x * 0.25, 3.8 + state.playerY * 0.4, 6.5);
+    camera.position.lerp(camTarget, 0.07);
+    camera.lookAt(player.position.x * 0.4, 1.2 + state.playerY * 0.25, -12);
 
     // ─── Screen Shake ───
     applyScreenShake(camera, delta);

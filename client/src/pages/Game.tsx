@@ -227,6 +227,13 @@ export default function Game() {
     });
   };
 
+  const linkWalletMutation = trpc.wallet.link.useMutation({
+    onSuccess: () => toast.success("Wallet linked to your account!"),
+    onError: (e: any) => {
+      if (!e.message?.includes("already")) toast.error("Failed to link wallet");
+    },
+  });
+
   const connectWallet = async () => {
     const solana = (window as any).solana;
     if (!solana || !solana.isPhantom) {
@@ -236,7 +243,11 @@ export default function Game() {
     setWalletConnecting(true);
     try {
       const resp = await solana.connect();
-      setWalletAddress(resp.publicKey.toString());
+      const addr = resp.publicKey.toString();
+      setWalletAddress(addr);
+      if (user) {
+        linkWalletMutation.mutate({ walletAddress: addr });
+      }
     } catch { /* user rejected */ }
     setWalletConnecting(false);
   };
@@ -274,7 +285,7 @@ export default function Game() {
               </div>
               <div className="bg-[#041830]/85 border border-sol-purple/40 rounded-lg px-3 py-2 backdrop-blur-sm">
                 <div className="text-[9px] text-sol-purple tracking-[3px] uppercase">Dist</div>
-                <div className="font-['Orbitron'] text-base font-bold text-white">{distance}m</div>
+                <div className="font-['Orbitron'] text-base font-bold text-white">{typeof distance === 'number' ? distance.toFixed(1) : distance}m</div>
               </div>
             </div>
 

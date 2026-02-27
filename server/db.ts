@@ -100,13 +100,15 @@ export async function getWalletByUserId(userId: number) {
 export async function saveGameSession(session: InsertGameSession) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(gameSessions).values(session);
+  const [inserted] = await db.insert(gameSessions).values(session).returning({ id: gameSessions.id });
 
   if (session.userId) {
     await updateLeaderboardForUser(session.userId, session.playerType ?? "human");
   } else if (session.aiAgentId) {
     await updateLeaderboardForAgent(session.aiAgentId);
   }
+
+  return inserted;
 }
 
 export async function getUserGameHistory(userId: number, limit = 50) {

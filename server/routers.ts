@@ -79,7 +79,7 @@ export const appRouter = router({
         solEarned: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        await saveGameSession({
+        const result = await saveGameSession({
           userId: ctx.user.id,
           playerType: "human",
           walletAddress: input.walletAddress ?? null,
@@ -90,7 +90,7 @@ export const appRouter = router({
           outcome: input.outcome,
           solEarned: input.solEarned ?? "0",
         });
-        return { success: true };
+        return { success: true, id: result?.id };
       }),
 
     // AI agent plays a game (simulated)
@@ -896,7 +896,12 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const wallet = await getWalletByUserId(ctx.user.id);
         if (!wallet || wallet.walletAddress !== input.walletAddress) {
-          throw new Error("Wallet not linked to your account");
+          throw new Error("Wallet not linked to your account. Please connect your wallet first.");
+        }
+
+        // Check treasury is configured
+        if (!ENV.treasuryWalletAddress && !ENV.treasuryPrivateKey) {
+          throw new Error("Treasury wallet not configured. Contact the admin to set TREASURY_WALLET_ADDRESS.");
         }
 
         const totalSol = input.creditsToBuy * CREDIT_CONSTANTS.ENTRY_FEE_SOL;
